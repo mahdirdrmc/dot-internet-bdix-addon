@@ -170,8 +170,19 @@ export default async function handler(req, res) {
     return;
   }
 
-  const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname || '/';
+  const originalReqUrl = req.url || '/';
+  const origParsed = url.parse(originalReqUrl, true);
+  const pathFromQuery = req.query?.path || origParsed.query?.path;
+
+  let pathname = pathFromQuery 
+    || req.headers['x-matched-path'] 
+    || req.headers['x-forwarded-uri'] 
+    || origParsed.pathname 
+    || '/';
+
+  if (pathname.includes('?')) {
+    pathname = pathname.split('?')[0];
+  }
   const host = req.headers.host || 'localhost:3000';
   const protocol = req.headers['x-forwarded-proto'] || 'https';
   const hostUrl = `${protocol}://${host}`;
@@ -249,8 +260,9 @@ export default async function handler(req, res) {
         if (searchMatch) search = decodeURIComponent(searchMatch[1]);
       }
 
-      if (parsedUrl.query.skip) skip = parseInt(parsedUrl.query.skip, 10);
-      if (parsedUrl.query.search) search = parsedUrl.query.search;
+      const queryObj = req.query || origParsed.query || {};
+      if (queryObj.skip) skip = parseInt(queryObj.skip, 10);
+      if (queryObj.search) search = queryObj.search;
 
       const metas = await getUnifiedCatalog(type, skip, search);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -294,7 +306,12 @@ export default async function handler(req, res) {
 
     // 404
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ error: 'Endpoint not found' }));
+    res.end(JSON.stringify({ 
+      error: 'Endpoint not found', 
+      pathname, 
+      reqUrl: req.url, 
+      matchedPath: req.headers['x-matched-path'] 
+    }));
   } catch (err) {
     console.error(`[Addon Error] on ${pathname}:`, err);
     res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
