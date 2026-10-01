@@ -1,5 +1,5 @@
 // ============================================================================
-// High-Speed Deep Archive Scraper for DFLIX & CircleFTP
+// High-Speed Deep Archive Scraper for DFLIX (Movies AND TV Series)
 // Built for 64GB RAM & High-Concurrency BDIX Connection
 // ============================================================================
 
@@ -10,7 +10,7 @@ import { upsertStream, connectToDatabase, getTotalStreamCount } from '../lib/db.
 const DFLIX_BASE = 'https://dflix.live';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 const CHECKPOINT_PATH = path.resolve('data/crawler_checkpoint.json');
-const CONCURRENCY = 25; // High-speed parallel requests
+const CONCURRENCY = 25;
 
 let checkpoint = { moviePage: 1, tvPage: 1, totalCrawled: 0 };
 if (fs.existsSync(CHECKPOINT_PATH)) {
@@ -60,96 +60,165 @@ async function lookupImdb(title, year, type) {
   }
 }
 
-export async function runDeepArchive(maxPagesToCrawl = 50) {
+export async function runDeepArchive(pagesPerRun = 20) {
   await connectToDatabase();
   console.log('============================================================');
   console.log('⚡ Starting High-Speed BDIX Deep Archive Scraper');
+  console.log('   Crawling both MOVIES and TV SERIES');
   console.log('============================================================');
   console.log(`Starting Movie Page: ${checkpoint.moviePage}`);
   console.log(`Starting TV Page:    ${checkpoint.tvPage}`);
-  console.log(`Total Indexed so far: ${await getTotalStreamCount()}`);
+  console.log(`Total Indexed:       ${await getTotalStreamCount()}`);
   console.log('============================================================\n');
 
   const cardRegex = /<a\s+aria-label="Play\s+([^,]+),\s*(\d{4})?,\s*(movie|series|tv)[^"]*"\s+class="[^"]*"\s+href="\/watch\/(\d+)"[\s\S]*?<img[\s\S]*?src="([^"]+)"/gi;
 
-  const endMoviePage = checkpoint.moviePage + maxPagesToCrawl;
+  // --- 1. Crawl Movies ---
+  const endMoviePage = checkpoint.moviePage + pagesPerRun;
+  console.log(`\n--- 1. Crawling Movies (Pages ${checkpoint.moviePage} to ${endMoviePage - 1}) ---`);
 
   for (let page = checkpoint.moviePage; page < endMoviePage; page++) {
-    console.log(`\n[Crawling Movie Page ${page}]...`);
-    let html = '';
     try {
-      html = await fetchText(`${DFLIX_BASE}/movies?page=${page}`);
+      const html = await fetchText(`${DFLIX_BASE}/movies?page=${page}`);
+      const titles = [];
+      let match;
+      while ((match = cardRegex.exec(html)) !== null) {
+        titles.push({
+          title: match[1].trim().replace(/&amp;/g, '&').replace(/&#x27;/g, "'"),
+          year: match[2] ? parseInt(match[2], 10) : null,
+          type: 'movie',
+          dflixId: parseInt(match[4], 10),
+          poster: match[5]
+        });
+      }
+
+      if (titles.length === 0) break;
+
+      for (let i = 0; i < titles.length; i += CONCURRENCY) {
+        const batch = titles.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(async (item) => {
+          try {
+            const titleData = await fetchJson(`${DFLIX_BASE}/api/title/${item.dflixId}`);
+            const files = titleData?.files || [];
+            if (files.length === 0) return;
+
+            const imdbId = await lookupImdb(item.title, item.year, item.type);
+            const targetId = imdbId || `dflix:${item.dflixId}`;
+
+            const streams = files.map(f => ({
+              source: 'dflix',
+              name: '⚡ DFlix [BDIX]',
+              title: `DFlix • ${f.quality || '1080p'} • ${(f.codec || 'x264').toUpperCase()}\nDot Internet Direct Stream`,
+              url: f.streamUrl.startsWith('http') ? f.streamUrl : `${DFLIX_BASE}${f.streamUrl}`,
+              quality: f.quality || '1080p',
+              subtitles: (f.subtitles || []).map(s => ({
+                id: String(s.id),
+                url: s.url.startsWith('http') ? s.url : `${DFLIX_BASE}${s.url}`,
+                lang: s.lang || 'eng'
+              }))
+            }));
+
+            await upsertStream({
+              _id: targetId,
+              imdbId: targetId,
+              type: 'movie',
+              title: item.title,
+              year: item.year,
+              poster: item.poster.startsWith('http') ? item.poster : `${DFLIX_BASE}${item.poster}`,
+              streams
+            });
+            checkpoint.totalCrawled++;
+          } catch (e) {}
+        }));
+        process.stdout.write(`  Movies page ${page}: indexed ${Math.min(i + CONCURRENCY, titles.length)} / ${titles.length} titles...\r`);
+      }
+      checkpoint.moviePage = page + 1;
+      saveCheckpoint();
     } catch (e) {
-      console.log(`Error fetching page ${page}:`, e.message);
-      continue;
+      console.log(`Error on movie page ${page}:`, e.message);
     }
-
-    const titles = [];
-    let match;
-    while ((match = cardRegex.exec(html)) !== null) {
-      titles.push({
-        title: match[1].trim().replace(/&amp;/g, '&').replace(/&#x27;/g, "'"),
-        year: match[2] ? parseInt(match[2], 10) : null,
-        type: 'movie',
-        dflixId: parseInt(match[4], 10),
-        poster: match[5]
-      });
-    }
-
-    if (titles.length === 0) {
-      console.log('No more movies found on this page.');
-      break;
-    }
-
-    // Process titles in batches with CONCURRENCY
-    for (let i = 0; i < titles.length; i += CONCURRENCY) {
-      const batch = titles.slice(i, i + CONCURRENCY);
-      await Promise.all(batch.map(async (item) => {
-        try {
-          const titleData = await fetchJson(`${DFLIX_BASE}/api/title/${item.dflixId}`);
-          const files = titleData?.files || [];
-          if (files.length === 0) return;
-
-          const imdbId = await lookupImdb(item.title, item.year, item.type);
-          const targetId = imdbId || `dflix:${item.dflixId}`;
-
-          const streams = files.map(f => ({
-            source: 'dflix',
-            name: '⚡ DFlix [BDIX]',
-            title: `DFlix • ${f.quality || '1080p'} • ${(f.codec || 'x264').toUpperCase()}\nDot Internet Direct Stream`,
-            url: f.streamUrl.startsWith('http') ? f.streamUrl : `${DFLIX_BASE}${f.streamUrl}`,
-            quality: f.quality || '1080p',
-            subtitles: (f.subtitles || []).map(s => ({
-              id: String(s.id),
-              url: s.url.startsWith('http') ? s.url : `${DFLIX_BASE}${s.url}`,
-              lang: s.lang || 'eng'
-            }))
-          }));
-
-          await upsertStream({
-            _id: targetId,
-            imdbId: targetId,
-            type: 'movie',
-            title: item.title,
-            year: item.year,
-            poster: item.poster.startsWith('http') ? item.poster : `${DFLIX_BASE}${item.poster}`,
-            streams
-          });
-          checkpoint.totalCrawled++;
-        } catch (err) {}
-      }));
-      process.stdout.write(`  Indexed ${i + batch.length} / ${titles.length} movies on page ${page}...\r`);
-    }
-
-    checkpoint.moviePage = page + 1;
-    saveCheckpoint();
   }
 
-  console.log(`\n\n[SUCCESS] Crawl batch complete! Total titles indexed: ${await getTotalStreamCount()}`);
+  // --- 2. Crawl TV Series ---
+  const endTvPage = checkpoint.tvPage + pagesPerRun;
+  console.log(`\n\n--- 2. Crawling TV Series (Pages ${checkpoint.tvPage} to ${endTvPage - 1}) ---`);
+
+  for (let page = checkpoint.tvPage; page < endTvPage; page++) {
+    try {
+      const html = await fetchText(`${DFLIX_BASE}/tv?page=${page}`);
+      const titles = [];
+      let match;
+      while ((match = cardRegex.exec(html)) !== null) {
+        titles.push({
+          title: match[1].trim().replace(/&amp;/g, '&').replace(/&#x27;/g, "'"),
+          year: match[2] ? parseInt(match[2], 10) : null,
+          type: 'series',
+          dflixId: parseInt(match[4], 10),
+          poster: match[5]
+        });
+      }
+
+      if (titles.length === 0) break;
+
+      for (let i = 0; i < titles.length; i += CONCURRENCY) {
+        const batch = titles.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(async (item) => {
+          try {
+            const titleData = await fetchJson(`${DFLIX_BASE}/api/title/${item.dflixId}`);
+            const files = titleData?.files || [];
+            if (files.length === 0) return;
+
+            const imdbId = await lookupImdb(item.title, item.year, item.type);
+            const targetId = imdbId || `dflix:${item.dflixId}`;
+
+            // Index each season and episode
+            for (const f of files) {
+              if (!f.season || !f.episode) continue;
+              const epId = `${targetId}:${f.season}:${f.episode}`;
+              const streamUrl = f.streamUrl.startsWith('http') ? f.streamUrl : `${DFLIX_BASE}${f.streamUrl}`;
+
+              const dflixStream = {
+                source: 'dflix',
+                name: '⚡ DFlix [BDIX]',
+                title: `DFlix • S${f.season}E${f.episode} • ${f.quality || '1080p'}\n${f.episodeTitle || ''}\nDot Internet Direct Stream`,
+                url: streamUrl,
+                quality: f.quality || '1080p',
+                subtitles: (f.subtitles || []).map(s => ({
+                  id: String(s.id),
+                  url: s.url.startsWith('http') ? s.url : `${DFLIX_BASE}${s.url}`,
+                  lang: s.lang || 'eng'
+                }))
+              };
+
+              await upsertStream({
+                _id: epId,
+                imdbId: targetId,
+                type: 'series',
+                title: item.title,
+                year: item.year,
+                season: f.season,
+                episode: f.episode,
+                poster: item.poster.startsWith('http') ? item.poster : `${DFLIX_BASE}${item.poster}`,
+                streams: [dflixStream]
+              });
+              checkpoint.totalCrawled++;
+            }
+          } catch (e) {}
+        }));
+        process.stdout.write(`  TV Series page ${page}: indexed ${Math.min(i + CONCURRENCY, titles.length)} / ${titles.length} series...\r`);
+      }
+      checkpoint.tvPage = page + 1;
+      saveCheckpoint();
+    } catch (e) {
+      console.log(`Error on TV page ${page}:`, e.message);
+    }
+  }
+
+  console.log(`\n\n[SUCCESS] Crawl completed! Total database titles: ${await getTotalStreamCount()}`);
 }
 
 if (process.argv[1]?.endsWith('scrape_deep_archive.js')) {
-  const pages = parseInt(process.argv[2] || '30', 10);
+  const pages = parseInt(process.argv[2] || '20', 10);
   runDeepArchive(pages).then(() => process.exit(0)).catch(e => {
     console.error(e);
     process.exit(1);
