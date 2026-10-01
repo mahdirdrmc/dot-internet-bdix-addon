@@ -173,8 +173,12 @@ export default async function handler(req, res) {
   const originalReqUrl = req.url || '/';
   const origParsed = url.parse(originalReqUrl, true);
   const pathFromQuery = req.query?.path || origParsed.query?.path;
+  const slugPath = req.query?.slug 
+    ? '/' + (Array.isArray(req.query.slug) ? req.query.slug.join('/') : req.query.slug) 
+    : null;
 
   let pathname = pathFromQuery 
+    || slugPath
     || req.headers['x-matched-path'] 
     || req.headers['x-forwarded-uri'] 
     || origParsed.pathname 

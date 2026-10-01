@@ -1,0 +1,55 @@
+{
+  "id": "org.dotinternet.bdix.unified",
+  "version": "2.1.0",
+  "name": "⚡ Dot Internet BDIX (DFlix + CircleFTP)",
+  "description": "Unified high-speed Dot Internet BDIX streaming for Movies & TV Series from DFlix and CircleFTP. 55,000+ titles with dual stream links.",
+  "logo": "https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?q=80&w=256&auto=format&fit=crop",
+  "background": "https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?q=80&w=1920&auto=format&fit=crop",
+  "resources": [
+    "catalog",
+    "stream",
+    "meta"
+  ],
+  "types": [
+    "movie",
+    "series"
+  ],
+  "catalogs": [
+    {
+      "type": "movie",
+      "id": "bdix_movies",
+      "name": "Dot Internet Movies",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ]
+    },
+    {
+      "type": "series",
+      "id": "bdix_series",
+      "name": "Dot Internet TV Series",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "skip",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "idPrefixes": [
+    "tt",
+    "tmdb:",
+    "dflix:",
+    "circleftp:"
+  ]
+}
