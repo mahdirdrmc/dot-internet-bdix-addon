@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  dflix-stremio-addon:
+    build: .
+    container_name: dflix-stremio-addon
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+    environment:
+      - PORT=7000
+      - DFLIX_BASE_URL=https://dflix.live

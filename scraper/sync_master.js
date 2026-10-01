@@ -1,0 +1,60 @@
+// ============================================================================
+// Scraper: Master Sync Daemon (Runs on PC boot or on-demand)
+// ============================================================================
+
+import { connectToDatabase, getTotalStreamCount } from '../lib/db.js';
+import { runSeeder } from './seed_from_bridges.js';
+import { scrapeDflixRecent } from './scrape_dflix_recent.js';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const LOG_FILE = path.resolve('scraper/sync.log');
+
+function log(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(line);
+  try {
+    fs.appendFileSync(LOG_FILE, line + '\n', 'utf-8');
+  } catch (e) {}
+}
+
+export async function runSync() {
+  log('============================================================');
+  log('🚀 Starting Dot Internet BDIX Scraper Sync...');
+  log('============================================================');
+
+  const { isFallback } = await connectToDatabase();
+  log(`Database Mode: ${isFallback ? 'Local Cache (data/bdix_cache.json)' : 'MongoDB Atlas Cloud'}`);
+
+  const initialCount = await getTotalStreamCount();
+  log(`Current Indexed Titles: ${initialCount}`);
+
+  // Step 1: If database is empty, seed from existing bridges first
+  if (initialCount < 50) {
+    log('Database is empty or brand new. Running baseline seeder...');
+    try {
+      await runSeeder();
+    } catch (e) {
+      log(`Seeder error: ${e.message}`);
+    }
+  }
+
+  // Step 2: Incremental crawl for live recent uploads on DFlix
+  log('Checking live DFlix ISP server for brand new releases...');
+  try {
+    await scrapeDflixRecent(3); // checks last 3 pages of movies and series
+  } catch (e) {
+    log(`Live scrape error: ${e.message}`);
+  }
+
+  const finalCount = await getTotalStreamCount();
+  log(`Sync finished successfully! Total Indexed Titles now: ${finalCount}`);
+  log('============================================================\n');
+}
+
+runSync()
+  .then(() => process.exit(0))
+  .catch(err => {
+    log(`Fatal Error in sync: ${err.message}`);
+    process.exit(1);
+  });

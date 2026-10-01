@@ -1,0 +1,29 @@
+{
+  "name": "stremio-dflix-bdix-addon",
+  "version": "1.2.0",
+  "description": "High-speed DFLIX ISP / BDIX server addon for Stremio and Nuvio",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "stremio",
+    "stremio-addon",
+    "nuvio",
+    "nuvio-plugin",
+    "bdix",
+    "dflix",
+    "streaming",
+    "isp-media-server"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "mongodb": "^7.7.0"
+  }
+}

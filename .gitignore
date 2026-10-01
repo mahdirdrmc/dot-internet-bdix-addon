@@ -1,0 +1,5 @@
+node_modules/
+.env
+.vercel
+*.log
+scraper/sync.log
