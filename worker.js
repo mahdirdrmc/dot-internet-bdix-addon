@@ -51,21 +51,49 @@ function getManifest(origin) {
   };
 }
 
+async function getExpectedYear(type, id) {
+  if (type !== 'movie' || !id.startsWith('tt')) return null;
+  try {
+    const res = await fetch(`https://v3-cinemeta.strem.io/meta/movie/${id}.json`, {
+      signal: AbortSignal.timeout(1800)
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const yr = data?.meta?.year || data?.meta?.releaseInfo;
+    return yr ? parseInt(yr, 10) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function isValidYearMatch(streamTitle, streamUrl, expectedYear) {
+  if (!expectedYear) return true;
+  const match = (streamTitle + ' ' + streamUrl).match(/\b(19\d\d|20\d\d)\b/);
+  if (!match) return true;
+  const foundYear = parseInt(match[1], 10);
+  return Math.abs(foundYear - expectedYear) <= 1;
+}
+
 async function fetchBridgeStreams(type, id) {
   const streams = [];
 
-  const [dRes, cRes] = await Promise.all([
+  const [expectedYear, dRes, cRes] = await Promise.all([
+    getExpectedYear(type, id),
+
     fetch(`${DFLIX_BRIDGE}/stream/${type}/${id}.json`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(3500)
     }).then(r => r.ok ? r.json() : null).catch(() => null),
 
     fetch(`${CIRCLE_BRIDGE}/stream/${type}/${id}.json`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(3500)
     }).then(r => r.ok ? r.json() : null).catch(() => null)
   ]);
 
   if (dRes?.streams) {
     for (const s of dRes.streams) {
+      if (!isValidYearMatch(s.title || '', s.url || '', expectedYear)) continue;
       streams.push({
         name: '⚡ DFlix [BDIX]',
         title: s.title || 'DFlix Direct Stream',
@@ -77,6 +105,7 @@ async function fetchBridgeStreams(type, id) {
 
   if (cRes?.streams) {
     for (const s of cRes.streams) {
+      if (!isValidYearMatch(s.title || '', s.url || '', expectedYear)) continue;
       streams.push({
         name: '⚡ CircleFTP [BDIX]',
         title: s.title || 'CircleFTP Direct Stream',
