@@ -1,102 +1,71 @@
-# ⚡ DFLIX BDIX Addon for Stremio & Nuvio
+# ⚡ Unified Dot Internet BDIX Pack (DFlix + CircleFTP) for Stremio & Nuvio
 
-A high-performance Stremio and Nuvio addon that connects directly to the **DFLIX ISP / BDIX server** (`https://dflix.live`), providing ultra-fast local direct streaming for Movies and TV Series with subtitles.
+A high-performance, 24/7 cloud-ready Stremio & Nuvio addon that merges **DFlix** (`https://dflix.live`) and **CircleFTP** (`http://circleftp.net`) into a single unified catalog and stream provider for Dot Internet BDIX users.
 
 ---
 
 ## ✨ Features
 
-- 🚀 **Full BDIX / ISP Speeds**: Streams directly from your ISP's library server with zero buffering.
-- 🎬 **Movies & TV Shows**: Supports movies up to 4K / 1080p and all seasons / episodes of TV series.
-- 💬 **Subtitles Support**: Automatically attaches WebVTT / SRT subtitles from DFLIX.
-- 🔍 **Seamless Cinemeta Integration**: Works automatically when searching or selecting any movie/series in Stremio or Nuvio (resolves IMDb IDs `tt...`).
-- 📚 **DFLIX Catalogs**: Browse DFLIX Movies and TV Series directly inside the Stremio / Nuvio "Discover" tab.
-- ⚡ **Zero External Dependencies**: Built with native Node.js (Node 18+). No heavy dependencies needed.
-- 🖥️ **Interactive Web Dashboard**: Built-in 1-click installation button, manifest URL copy, and live stream tester at `http://localhost:7000`.
+- 🚀 **Unified Dual BDIX Streams**: Every movie and TV show episode delivers streams from both **⚡ DFlix [BDIX]** and **⚡ CircleFTP [BDIX]**.
+- 🎬 **Full Movies & TV Shows**: Supports 55,000+ titles including complete seasons and episodes of TV series.
+- ☁️ **24/7 Free Cloud Hosting on Vercel**: No need to keep your PC turned on to watch on your tablet, phone, or TV.
+- ⚡ **Zero-Buffering BDIX Bandwidth**: Directly routes video streams to local ISP BDIX IP connections for maximum speed.
+- 🔄 **Automated Silent Background Sync**: Automatically crawls newly uploaded releases in the background when your PC boots.
 
 ---
 
-## 🚀 Quick Start (Windows)
+## 🚀 1-Click 24/7 Vercel Deployment
 
-1. Double-click [`run.bat`](file:///E:/Codes/Stremio/run.bat) in this folder.
-2. The addon server will start, and your browser will automatically open:
+Deploy this addon directly to your free Vercel account in under 60 seconds:
+
+1. Click here: **[Deploy with Vercel](https://vercel.com/new/import?s=https://github.com/mahdirdrmc/dot-internet-bdix-addon)**
+2. Click **Deploy** (No extra build settings or environment variables needed!).
+3. Once deployed, your manifest URL will be:
    ```
-   http://localhost:7000
+   https://<your-project-name>.vercel.app/manifest.json
    ```
-3. Click the **"Install on Stremio"** button, or copy the Manifest URL for **Nuvio**.
-
----
-
-## 💻 Manual Start (Any OS - Windows / Mac / Linux)
-
-Ensure you have **Node.js 18+** installed:
-
-```bash
-# Start the server
-node server.js
-```
-
-Or with npm:
-
-```bash
-npm start
-```
-
-The server will listen on `http://localhost:7000`.
+4. Visit `https://<your-project-name>.vercel.app` in your browser and click **"Install on Stremio"** or copy the URL into **Nuvio**!
 
 ---
 
 ## 📲 How to Install
 
-### 1. In Stremio (Desktop)
-1. Ensure the addon server is running (`node server.js` or `run.bat`).
-2. Open `http://localhost:7000` in your browser.
-3. Click **"Install on Stremio"** (or open the link `stremio://localhost:7000/manifest.json`).
-4. Stremio will open and ask: **"Install Addon DFLIX BDIX Server?"** -> Click **Install**.
+### 1. In Stremio
+- Open `https://<your-project-name>.vercel.app` in your browser and click **"Install on Stremio"**.
+- Alternatively, in Stremio search or addon URL bar, paste:
+  ```
+  https://<your-project-name>.vercel.app/manifest.json
+  ```
+- *Tip:* Once installed on Stremio Desktop while logged into your Stremio account, it automatically syncs to your **Android Tablet**, **Phone**, and **Android TV**!
 
-### 2. In Stremio (Android TV / FireStick / Mobile)
-1. If running locally on your PC, find your PC's local IP address on Wi-Fi/LAN (e.g. `192.168.1.100` via `ipconfig`).
-2. On your phone or TV browser (or in Stremio's Addon search box), enter:
-   ```
-   http://<YOUR_PC_IP>:7000/manifest.json
-   ```
-   *(e.g., `http://192.168.1.100:7000/manifest.json`)*
-3. Alternatively, install it once on Stremio Desktop while logged into your Stremio account; your installed addons automatically sync across all your devices (TV, Android, iOS Web)!
-
-### 3. In Nuvio
-1. Copy the Manifest URL:
-   ```
-   http://localhost:7000/manifest.json
-   ```
-   *(or `http://<YOUR_PC_IP>:7000/manifest.json` if using Nuvio on another device)*
-2. In the **Nuvio** app, go to **Settings** -> **Addons** (or **Plugins**).
-3. Paste the Manifest URL and confirm installation.
+### 2. In Nuvio
+- In Nuvio, go to **Settings** -> **Plugins / Addons** -> **Add New Plugin**.
+- Paste your manifest URL:
+  ```
+  https://<your-project-name>.vercel.app/manifest.json
+  ```
 
 ---
 
-## 🐳 Running with Docker
+## 🤖 PC Background Crawler & Scraper
 
-```bash
-docker compose up -d
-```
+A silent background crawler is set up in `scraper/` on your PC to regularly index newly uploaded releases and deep archive titles into the cache:
 
----
+### 1. Automatic Startup Sync
+- A shortcut is already placed in your Windows Startup folder (`DotInternet-BDIX-Sync.lnk`).
+- Whenever you boot your PC, `sync_master.js` runs silently in the background and indexes the newest releases.
 
-## ☁️ Free 24/7 Cloud Hosting (Optional)
-
-If you want the addon available 24/7 without keeping your computer running, you can deploy it to any free Node.js hosting platform (such as [Koyeb](https://www.koyeb.com), [Render](https://render.com), [Railway](https://railway.app), or any VPS):
-
-1. Upload this folder to a GitHub repository.
-2. In Koyeb or Render, create a new Web Service pointing to your repo.
-3. Build Command: *(leave empty)*
-4. Run Command: `node server.js`
-5. You will get a free HTTPS URL (e.g., `https://my-dflix-addon.koyeb.app/manifest.json`) that can be installed on any device anytime!
+### 2. Manual Deep Crawl
+To crawl hundreds of additional archive pages using your PC's multi-core hardware and RAM:
+- Double-click [`scraper/run_deep_archive.bat`](file:///E:/Codes/Stremio/scraper/run_deep_archive.bat)
+- This crawls 30 pages of movies and series in parallel with 25 concurrent workers and saves them to your database cache.
 
 ---
 
-## ⚙️ Environment Variables
+## 🗄️ Optional: MongoDB Atlas Cloud Sync
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `7000` | Port for the addon HTTP server |
-| `DFLIX_BASE_URL` | `https://dflix.live` | Target DFLIX server URL |
+If you want your PC scraper to automatically push newly scraped titles directly to your Vercel cloud addon in real-time:
+1. Create a free MongoDB Atlas cluster at [mongodb.com](https://www.mongodb.com).
+2. Set the `MONGODB_URI` environment variable in your Vercel Project Settings.
+3. Add `MONGODB_URI` to a `.env` file in this directory on your PC.
+Both your PC scraper and Vercel will then share the same live cloud database!
