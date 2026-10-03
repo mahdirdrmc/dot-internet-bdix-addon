@@ -49,6 +49,24 @@ export async function runSync() {
 
   const finalCount = await getTotalStreamCount();
   log(`Sync finished successfully! Total Indexed Titles now: ${finalCount}`);
+
+  // Step 3: Automatically push updated cache to GitHub so Render gets the newest titles
+  try {
+    const { execSync } = await import('node:child_process');
+    const status = execSync('git status --porcelain data/bdix_cache.json', { encoding: 'utf-8' });
+    if (status.trim()) {
+      log('Pushing updated BDIX streams to GitHub so Render receives them...');
+      execSync('git add data/bdix_cache.json', { stdio: 'ignore' });
+      execSync('git commit -m "Auto-sync BDIX streams from PC scraper"', { stdio: 'ignore' });
+      execSync('git push origin main', { stdio: 'ignore' });
+      log('✅ GitHub updated! Render will serve newest scraped releases.');
+    } else {
+      log('Cache is already in sync with GitHub.');
+    }
+  } catch (e) {
+    log(`Git auto-push notice: ${e.message}`);
+  }
+
   log('============================================================\n');
 }
 

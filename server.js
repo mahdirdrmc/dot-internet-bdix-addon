@@ -6,6 +6,7 @@
 
 import http from 'node:http';
 import url from 'node:url';
+import { getStreamById, getCatalogItems, syncFromRemoteCache } from './lib/db.js';
 
 const PORT = process.env.PORT || 7000;
 const ADDON_ID = 'org.dotinternet.bdix.unified';
@@ -133,6 +134,18 @@ async function fetchBridgeStreams(type, id) {
 }
 
 async function getUnifiedCatalog(type, skip = 0, search = '') {
+  // 1. Fetch newly scraped titles from database / cache
+  const localItems = await getCatalogItems(type, skip, 50, search);
+  const localMetas = localItems.map(it => ({
+    id: it._id,
+    type: it.type,
+    name: it.title,
+    poster: it.poster,
+    releaseInfo: it.year ? String(it.year) : undefined,
+    description: 'Stream via Dot Internet BDIX (DFlix & CircleFTP)'
+  }));
+
+  // 2. Fetch from bridges
   const dCat = type === 'movie' ? 'dflix_movies_catalog' : 'dflix_series_catalog';
   const cCat = type === 'movie' ? 'circleftp_movies_catalog' : 'circleftp_series_catalog';
 
@@ -160,7 +173,7 @@ async function getUnifiedCatalog(type, skip = 0, search = '') {
   ];
 
   const mergedMap = new Map();
-  for (const m of bridgeMetas) {
+  for (const m of [...localMetas, ...bridgeMetas]) {
     const key = m.id || m.name.toLowerCase();
     if (!mergedMap.has(key)) {
       mergedMap.set(key, {
@@ -524,10 +537,16 @@ const server = http.createServer(async (req, res) => {
       const type = streamMatch[1];
       const id = streamMatch[2];
 
+      // 1. Check local/scraped database first (new releases like Reacher S4E8)
+      const localItem = await getStreamById(id);
+      let streams = localItem?.streams || [];
+
+      // 2. Fetch from dual bridges (DFlix + CircleFTP) for historical/archive fallback
       const bridgeStreams = await fetchBridgeStreams(type, id);
 
+      // 3. Merge & deduplicate by URL
       const streamMap = new Map();
-      for (const s of bridgeStreams) {
+      for (const s of [...streams, ...bridgeStreams]) {
         if (!streamMap.has(s.url)) {
           streamMap.set(s.url, s);
         }
@@ -558,4 +577,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`⚡ Dot Internet BDIX Addon is running on port ${PORT}`);
+  // Initial sync from GitHub remote cache & recurring 10-minute sync
+  syncFromRemoteCache();
+  setInterval(syncFromRemoteCache, 10 * 60 * 1000);
 });
