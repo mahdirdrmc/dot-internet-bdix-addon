@@ -11,7 +11,7 @@ import { getStreamById, getCatalogItems, syncFromRemoteCache } from './lib/db.js
 const PORT = process.env.PORT || 7000;
 const ADDON_ID = 'org.dotinternet.bdix.unified';
 const ADDON_NAME = '⚡ Dot Internet BDIX (DFlix + CircleFTP)';
-const ADDON_VERSION = '2.1.0';
+const ADDON_VERSION = '2.2.0';
 
 const DFLIX_BRIDGE = 'https://dstremio.mehedihtanvir.me';
 const CIRCLE_BRIDGE = 'https://cstremio.mehedihtanvir.me';
@@ -32,7 +32,7 @@ function getManifest() {
     description: 'Unified high-speed Dot Internet BDIX streaming for Movies & TV Series from DFlix and CircleFTP. 55,000+ titles with dual stream links.',
     logo: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?q=80&w=256&auto=format&fit=crop',
     background: 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?q=80&w=1920&auto=format&fit=crop',
-    resources: ['catalog', 'stream', 'meta'],
+    resources: ['catalog', 'stream'],
     types: ['movie', 'series'],
     catalogs: [
       {
@@ -79,6 +79,82 @@ async function getExpectedYear(type, id) {
   } catch (e) {
     return null;
   }
+}
+
+// TMDB API & Universal ID Mapping Cache
+const TMDB_API_KEY = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
+const idMap = new Map([
+  ['tmdb:108978', 'tt9288030'],
+  ['tt9288030', 'tmdb:108978'],
+  ['dflix:13526', 'tt9288030'],
+  ['circleftp:series:9368', 'tt9288030']
+]);
+
+async function resolveEquivalentIds(type, rawId) {
+  const ids = new Set([rawId]);
+
+  let root = rawId;
+  let suffix = '';
+
+  if (rawId.startsWith('tt')) {
+    const parts = rawId.split(':');
+    root = parts[0];
+    if (parts.length > 1) suffix = ':' + parts.slice(1).join(':');
+  } else if (rawId.startsWith('circleftp:series:') || rawId.startsWith('circleftp:movie:')) {
+    const parts = rawId.split(':');
+    root = parts.slice(0, 3).join(':');
+    if (parts.length > 3) suffix = ':' + parts.slice(3).join(':');
+  } else if (rawId.startsWith('tmdb:') || rawId.startsWith('dflix:')) {
+    const parts = rawId.split(':');
+    root = parts.slice(0, 2).join(':');
+    if (parts.length > 2) suffix = ':' + parts.slice(2).join(':');
+  }
+
+  // 1. Check in-memory map
+  if (idMap.has(root)) {
+    const mapped = idMap.get(root);
+    ids.add(mapped + suffix);
+  }
+
+  // 2. If tmdb: ID, resolve to IMDb via TMDB external_ids API
+  if (root.startsWith('tmdb:') && !idMap.has(root)) {
+    const tmdbNum = root.split(':')[1];
+    const endpoint = type === 'series' ? 'tv' : 'movie';
+    try {
+      const res = await fetch(`https://api.themoviedb.org/3/${endpoint}/${tmdbNum}/external_ids?api_key=${TMDB_API_KEY}`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.imdb_id) {
+          idMap.set(root, d.imdb_id);
+          idMap.set(d.imdb_id, root);
+          ids.add(d.imdb_id + suffix);
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 3. If tt ID, resolve to TMDB via TMDB find API
+  if (root.startsWith('tt') && !idMap.has(root)) {
+    try {
+      const res = await fetch(`https://api.themoviedb.org/3/find/${root}?external_source=imdb_id&api_key=${TMDB_API_KEY}`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const tmdbId = type === 'series' ? d.tv_results?.[0]?.id : d.movie_results?.[0]?.id;
+        if (tmdbId) {
+          const tRoot = `tmdb:${tmdbId}`;
+          idMap.set(root, tRoot);
+          idMap.set(tRoot, root);
+          ids.add(tRoot + suffix);
+        }
+      }
+    } catch (e) {}
+  }
+
+  return Array.from(ids);
 }
 
 function isValidYearMatch(streamTitle, streamUrl, expectedYear) {
@@ -535,24 +611,44 @@ const server = http.createServer(async (req, res) => {
     const streamMatch = pathname.match(/^\/stream\/([^\/]+)\/([^\/]+)\.json$/);
     if (streamMatch) {
       const type = streamMatch[1];
-      const id = streamMatch[2];
+      const rawId = streamMatch[2];
 
-      // 1. Check local/scraped database first (new releases like Reacher S4E8)
-      const localItem = await getStreamById(id);
-      let streams = localItem?.streams || [];
+      // Resolve all candidate IDs across formats (e.g. tmdb:108978:4:8 <-> tt9288030:4:8 <-> dflix:13526:4:8)
+      const candidateIds = await resolveEquivalentIds(type, rawId);
 
-      // 2. Fetch from dual bridges (DFlix + CircleFTP) for historical/archive fallback
-      const bridgeStreams = await fetchBridgeStreams(type, id);
+      // 1. Check local/scraped database for all candidate IDs
+      let localStreams = [];
+      for (const cid of candidateIds) {
+        const item = await getStreamById(cid);
+        if (item?.streams?.length) {
+          localStreams.push(...item.streams);
+        }
+      }
+
+      // 2. Fetch from dual bridges (DFlix + CircleFTP) for all candidate IDs
+      const bridgePromises = candidateIds.map(cid => fetchBridgeStreams(type, cid));
+      const bridgeResults = await Promise.all(bridgePromises);
+      const bridgeStreams = bridgeResults.flat();
 
       // 3. Merge & deduplicate by URL
       const streamMap = new Map();
-      for (const s of [...streams, ...bridgeStreams]) {
+      for (const s of [...localStreams, ...bridgeStreams]) {
         if (!streamMap.has(s.url)) {
+          if (s.subtitles) {
+            for (const sub of s.subtitles) {
+              if (sub.lang === 'en') sub.lang = 'eng';
+            }
+          }
           streamMap.set(s.url, s);
         }
       }
 
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
       res.end(JSON.stringify({ streams: Array.from(streamMap.values()) }));
       return;
     }

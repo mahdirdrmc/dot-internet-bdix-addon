@@ -74,7 +74,21 @@ export async function scrapeTitle(queryOrId) {
 
   const imdbId = await lookupImdb(title, year, type);
   const targetId = imdbId || `dflix:${titleId}`;
-  console.log(`🎬 Target ID: ${targetId} (IMDb: ${imdbId || 'None'}) | Total Files: ${files.length}`);
+
+  // Find TMDB ID for Nuvio / TMDB client compatibility
+  let tmdbId = null;
+  try {
+    const tmdbKey = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
+    if (imdbId) {
+      const res = await fetch(`https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&api_key=${tmdbKey}`);
+      if (res.ok) {
+        const d = await res.json();
+        tmdbId = type === 'series' ? d.tv_results?.[0]?.id : d.movie_results?.[0]?.id;
+      }
+    }
+  } catch (e) {}
+
+  console.log(`🎬 Target ID: ${targetId} (IMDb: ${imdbId || 'None'} | TMDB: ${tmdbId || 'None'}) | Total Files: ${files.length}`);
 
   let added = 0;
 
@@ -89,7 +103,7 @@ export async function scrapeTitle(queryOrId) {
       subtitles: (f.subtitles || []).map(s => ({
         id: String(s.id),
         url: s.url.startsWith('http') ? s.url : `${DFLIX_BASE}${s.url}`,
-        lang: s.lang || 'eng'
+        lang: s.lang === 'en' ? 'eng' : (s.lang || 'eng')
       })),
       behaviorHints: { notWebReady: false }
     }));
@@ -97,7 +111,7 @@ export async function scrapeTitle(queryOrId) {
     const existing = await getStreamById(targetId);
     const circleStreams = (existing?.streams || []).filter(s => s.source === 'circleftp');
 
-    await upsertStream({
+    const movieEntry = {
       _id: targetId,
       imdbId: targetId,
       type: 'movie',
@@ -105,7 +119,11 @@ export async function scrapeTitle(queryOrId) {
       year,
       poster: details.posterPath ? `${DFLIX_BASE}/api/image/poster${details.posterPath}` : undefined,
       streams: [...streams, ...circleStreams]
-    });
+    };
+
+    await upsertStream(movieEntry);
+    if (tmdbId) await upsertStream({ ...movieEntry, _id: `tmdb:${tmdbId}` });
+    await upsertStream({ ...movieEntry, _id: `dflix:${titleId}` });
     added++;
   } else {
     // TV Series - Upsert each episode
@@ -123,15 +141,18 @@ export async function scrapeTitle(queryOrId) {
         subtitles: (f.subtitles || []).map(s => ({
           id: String(s.id),
           url: s.url.startsWith('http') ? s.url : `${DFLIX_BASE}${s.url}`,
-          lang: s.lang || 'eng'
+          lang: s.lang === 'en' ? 'eng' : (s.lang || 'eng')
         })),
-        behaviorHints: { notWebReady: false }
+        behaviorHints: {
+          notWebReady: false,
+          bingeGroup: `dflix-series-${titleId}`
+        }
       };
 
       const existing = await getStreamById(epId);
       const circleStreams = (existing?.streams || []).filter(s => s.source === 'circleftp');
 
-      await upsertStream({
+      const epEntry = {
         _id: epId,
         imdbId: targetId,
         type: 'series',
@@ -141,7 +162,11 @@ export async function scrapeTitle(queryOrId) {
         episode: f.episode,
         poster: details.posterPath ? `${DFLIX_BASE}/api/image/poster${details.posterPath}` : undefined,
         streams: [dflixStream, ...circleStreams]
-      });
+      };
+
+      await upsertStream(epEntry);
+      if (tmdbId) await upsertStream({ ...epEntry, _id: `tmdb:${tmdbId}:${f.season}:${f.episode}` });
+      await upsertStream({ ...epEntry, _id: `dflix:${titleId}:${f.season}:${f.episode}` });
       added++;
     }
   }

@@ -42,7 +42,7 @@ export async function runSync() {
   // Step 2: Incremental crawl for live recent uploads on DFlix
   log('Checking live DFlix ISP server for brand new releases...');
   try {
-    await scrapeDflixRecent(3); // checks last 3 pages of movies and series
+    await scrapeDflixRecent(5); // checks last 5 pages of movies and series (~300 titles)
   } catch (e) {
     log(`Live scrape error: ${e.message}`);
   }
@@ -53,12 +53,15 @@ export async function runSync() {
   // Step 3: Automatically push updated cache to GitHub so Render gets the newest titles
   try {
     const { execSync } = await import('node:child_process');
-    const status = execSync('git status --porcelain data/bdix_cache.json', { encoding: 'utf-8' });
+    const { fileURLToPath } = await import('node:url');
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+    const status = execSync('git status --porcelain data/bdix_cache.json', { cwd: rootDir, encoding: 'utf-8' });
     if (status.trim()) {
       log('Pushing updated BDIX streams to GitHub so Render receives them...');
-      execSync('git add data/bdix_cache.json', { stdio: 'ignore' });
-      execSync('git commit -m "Auto-sync BDIX streams from PC scraper"', { stdio: 'ignore' });
-      execSync('git push origin main', { stdio: 'ignore' });
+      execSync('git add data/bdix_cache.json', { cwd: rootDir, stdio: 'ignore' });
+      execSync('git commit -m "Auto-sync BDIX streams from PC scraper"', { cwd: rootDir, stdio: 'ignore' });
+      execSync('git push origin main', { cwd: rootDir, stdio: 'ignore' });
       log('✅ GitHub updated! Render will serve newest scraped releases.');
     } else {
       log('Cache is already in sync with GitHub.');
