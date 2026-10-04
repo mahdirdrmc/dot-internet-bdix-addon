@@ -708,7 +708,7 @@ const server = http.createServer(async (req, res) => {
       // Resolve all candidate IDs across formats (e.g. tmdb:108978:4:8 <-> tt9288030:4:8 <-> dflix:13526:4:8)
       const candidateIds = await resolveEquivalentIds(type, rawId);
 
-      // 1. Check local/scraped database for all candidate IDs
+      // 1. Fast Memory/Cache Lookup (0.1ms)
       let localStreams = [];
       for (const cid of candidateIds) {
         const item = await getStreamById(cid);
@@ -717,10 +717,19 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      // 2. Fetch from dual bridges (DFlix + CircleFTP) for all candidate IDs
-      const bridgePromises = candidateIds.map(cid => fetchBridgeStreams(type, cid));
-      const bridgeResults = await Promise.all(bridgePromises);
-      const bridgeStreams = bridgeResults.flat();
+      // 2. Fetch from external bridges ONLY as fallback if not in local cache
+      let bridgeStreams = [];
+      if (localStreams.length === 0) {
+        const primaryIds = Array.from(new Set([
+          rawId,
+          candidateIds.find(c => c.startsWith('tt')),
+          candidateIds.find(c => c.startsWith('tmdb:'))
+        ].filter(Boolean))).slice(0, 2);
+
+        const bridgePromises = primaryIds.map(cid => fetchBridgeStreams(type, cid));
+        const bridgeResults = await Promise.all(bridgePromises);
+        bridgeStreams = bridgeResults.flat();
+      }
 
       // 3. Merge & deduplicate by URL
       const streamMap = new Map();
