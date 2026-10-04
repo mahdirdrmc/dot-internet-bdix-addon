@@ -6,12 +6,12 @@
 
 import http from 'node:http';
 import url from 'node:url';
-import { getStreamById, getCatalogItems, syncFromRemoteCache } from './lib/db.js';
+import { getStreamById, getCatalogItems, syncFromRemoteCache, getTotalStreamCount } from './lib/db.js';
 
 const PORT = process.env.PORT || 7000;
 const ADDON_ID = 'org.dotinternet.bdix.unified';
 const ADDON_NAME = '⚡ Dot Internet BDIX (DFlix + CircleFTP)';
-const ADDON_VERSION = '2.2.0';
+const ADDON_VERSION = '2.3.0';
 
 const DFLIX_BRIDGE = 'https://dstremio.mehedihtanvir.me';
 const CIRCLE_BRIDGE = 'https://cstremio.mehedihtanvir.me';
@@ -54,7 +54,11 @@ function getManifest() {
         ]
       }
     ],
-    idPrefixes: ['tt', 'tmdb:', 'dflix:', 'circleftp:']
+    idPrefixes: ['tt', 'tmdb:', 'tmdb', 'dflix:', 'circleftp:'],
+    behaviorHints: {
+      configurable: false,
+      configurationRequired: false
+    }
   };
 }
 
@@ -91,32 +95,42 @@ const idMap = new Map([
 ]);
 
 async function resolveEquivalentIds(type, rawId) {
-  const ids = new Set([rawId]);
+  let cleanId = String(rawId || '').trim();
+  try { cleanId = decodeURIComponent(cleanId); } catch (e) {}
+  try { cleanId = decodeURIComponent(cleanId); } catch (e) {}
 
-  let root = rawId;
-  let suffix = '';
+  const ids = new Set([cleanId, rawId]);
 
-  if (rawId.startsWith('tt')) {
-    const parts = rawId.split(':');
-    root = parts[0];
-    if (parts.length > 1) suffix = ':' + parts.slice(1).join(':');
-  } else if (rawId.startsWith('circleftp:series:') || rawId.startsWith('circleftp:movie:')) {
-    const parts = rawId.split(':');
-    root = parts.slice(0, 3).join(':');
-    if (parts.length > 3) suffix = ':' + parts.slice(3).join(':');
-  } else if (rawId.startsWith('tmdb:') || rawId.startsWith('dflix:')) {
-    const parts = rawId.split(':');
-    root = parts.slice(0, 2).join(':');
-    if (parts.length > 2) suffix = ':' + parts.slice(2).join(':');
+  let root = cleanId;
+  let season = null;
+  let episode = null;
+
+  if (type === 'series') {
+    const parts = cleanId.split(':');
+    if (parts.length >= 3) {
+      const s = parseInt(parts[parts.length - 2], 10);
+      const e = parseInt(parts[parts.length - 1], 10);
+      if (!isNaN(s) && !isNaN(e)) {
+        season = s;
+        episode = e;
+        root = parts.slice(0, parts.length - 2).join(':');
+      }
+    }
   }
 
-  // 1. Check in-memory map
-  if (idMap.has(root)) {
-    const mapped = idMap.get(root);
-    ids.add(mapped + suffix);
+  // 1. Candidate roots
+  const candidateRoots = new Set([root]);
+  if (idMap.has(root)) candidateRoots.add(idMap.get(root));
+
+  // 2. Pre-mapped titles (Reacher alias group)
+  if (root === 'tt9288030' || root === 'tmdb:108978' || root === 'dflix:13526' || root === 'circleftp:series:9368') {
+    candidateRoots.add('tt9288030');
+    candidateRoots.add('tmdb:108978');
+    candidateRoots.add('dflix:13526');
+    candidateRoots.add('circleftp:series:9368');
   }
 
-  // 2. If tmdb: ID, resolve to IMDb via TMDB external_ids API
+  // 3. If tmdb: ID not mapped, resolve via TMDB external_ids API
   if (root.startsWith('tmdb:') && !idMap.has(root)) {
     const tmdbNum = root.split(':')[1];
     const endpoint = type === 'series' ? 'tv' : 'movie';
@@ -129,13 +143,13 @@ async function resolveEquivalentIds(type, rawId) {
         if (d.imdb_id) {
           idMap.set(root, d.imdb_id);
           idMap.set(d.imdb_id, root);
-          ids.add(d.imdb_id + suffix);
+          candidateRoots.add(d.imdb_id);
         }
       }
     } catch (e) {}
   }
 
-  // 3. If tt ID, resolve to TMDB via TMDB find API
+  // 4. If tt ID not mapped, resolve via TMDB find API
   if (root.startsWith('tt') && !idMap.has(root)) {
     try {
       const res = await fetch(`https://api.themoviedb.org/3/find/${root}?external_source=imdb_id&api_key=${TMDB_API_KEY}`, {
@@ -148,10 +162,21 @@ async function resolveEquivalentIds(type, rawId) {
           const tRoot = `tmdb:${tmdbId}`;
           idMap.set(root, tRoot);
           idMap.set(tRoot, root);
-          ids.add(tRoot + suffix);
+          candidateRoots.add(tRoot);
         }
       }
     } catch (e) {}
+  }
+
+  // 5. Expand all roots into formatted IDs (including padded versions)
+  for (const r of candidateRoots) {
+    if (season !== null && episode !== null) {
+      ids.add(`${r}:${season}:${episode}`);
+      ids.add(`${r}:${season}:${String(episode).padStart(2, '0')}`);
+      ids.add(`${r}:${String(season).padStart(2, '0')}:${String(episode).padStart(2, '0')}`);
+    } else {
+      ids.add(r);
+    }
   }
 
   return Array.from(ids);
@@ -546,6 +571,23 @@ function getDashboardHtml(hostUrl) {
 </html>`;
 }
 
+// Request Debug Logger
+const requestLogs = [];
+function recordLog(req, status, info = {}) {
+  const item = {
+    time: new Date().toISOString(),
+    ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown',
+    ua: req.headers['user-agent'] || '',
+    method: req.method,
+    url: req.url,
+    status,
+    ...info
+  };
+  requestLogs.unshift(item);
+  if (requestLogs.length > 100) requestLogs.pop();
+  console.log(`[${item.time}] ${item.method} ${item.url} -> ${status} ${JSON.stringify(info)}`);
+}
+
 // ----------------------------------------------------------------------------
 // HTTP Server
 // ----------------------------------------------------------------------------
@@ -562,7 +604,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   const parsedUrl = url.parse(req.url, true);
-  const pathname = parsedUrl.pathname || '/';
+  let pathname = parsedUrl.pathname || '/';
+  try { pathname = decodeURI(pathname); } catch (e) {}
+
   const host = req.headers.host || `localhost:${PORT}`;
   const protocol = req.headers['x-forwarded-proto'] || 'http';
   const hostUrl = `${protocol}://${host}`;
@@ -575,18 +619,62 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 2. Manifest
-    if (pathname === '/manifest.json') {
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    // 2. Debug & Live Logs
+    if (pathname === '/debug' || pathname === '/debug.json') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store'
+      });
+      res.end(JSON.stringify({
+        addon: ADDON_NAME,
+        version: ADDON_VERSION,
+        uptime: Math.round(process.uptime()) + 's',
+        totalStreamsInCache: await getTotalStreamCount(),
+        recentRequests: requestLogs
+      }, null, 2));
+      return;
+    }
+
+    // 3. Test Reacher Health Check
+    if (pathname === '/test-reacher') {
+      const results = {};
+      for (let ep = 1; ep <= 8; ep++) {
+        const testCandidates = await resolveEquivalentIds('series', `tt9288030:4:${ep}`);
+        let epStreams = [];
+        for (const cid of testCandidates) {
+          const item = await getStreamById(cid);
+          if (item?.streams) epStreams.push(...item.streams);
+        }
+        results[`S4E${ep}`] = {
+          streamsFound: epStreams.length,
+          title: epStreams[0]?.title,
+          url: epStreams[0]?.url
+        };
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store'
+      });
+      res.end(JSON.stringify(results, null, 2));
+      return;
+    }
+
+    // 4. Manifest
+    if (pathname === '/manifest.json' || pathname === '/manifest') {
+      recordLog(req, 200, { action: 'manifest' });
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store'
+      });
       res.end(JSON.stringify(getManifest()));
       return;
     }
 
-    // 3. Catalogs
-    const catalogMatch = pathname.match(/^\/catalog\/([^\/]+)\/([^\/\.]+)(?:\/([^\/]+))?\.json$/);
+    // 5. Catalogs
+    const catalogMatch = pathname.match(/^\/catalog\/([^\/]+)\/([^\/\.]+?)(?:\/([^\/]+))?(?:\.json)?\/?$/);
     if (catalogMatch) {
-      const type = catalogMatch[1];
-      const extraStr = catalogMatch[3] || '';
+      const type = decodeURIComponent(catalogMatch[1]);
+      const extraStr = catalogMatch[3] ? decodeURIComponent(catalogMatch[3]) : '';
 
       let skip = 0;
       let search = '';
@@ -602,16 +690,20 @@ const server = http.createServer(async (req, res) => {
       if (parsedUrl.query.search) search = parsedUrl.query.search;
 
       const metas = await getUnifiedCatalog(type, skip, search);
+      recordLog(req, 200, { action: 'catalog', type, search, skip, count: metas.length });
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ metas }));
       return;
     }
 
-    // 4. Streams
-    const streamMatch = pathname.match(/^\/stream\/([^\/]+)\/([^\/]+)\.json$/);
+    // 6. Streams
+    const streamMatch = pathname.match(/^\/stream\/([^\/]+)\/([^\/]+?)(?:\.json)?\/?$/);
     if (streamMatch) {
-      const type = streamMatch[1];
-      const rawId = streamMatch[2];
+      const type = decodeURIComponent(streamMatch[1]);
+      let rawId = streamMatch[2];
+      try { rawId = decodeURIComponent(rawId); } catch (e) {}
+      try { rawId = decodeURIComponent(rawId); } catch (e) {}
+      rawId = rawId.trim();
 
       // Resolve all candidate IDs across formats (e.g. tmdb:108978:4:8 <-> tt9288030:4:8 <-> dflix:13526:4:8)
       const candidateIds = await resolveEquivalentIds(type, rawId);
@@ -643,18 +735,21 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      const streamList = Array.from(streamMap.values());
+      recordLog(req, 200, { action: 'stream', type, rawId, candidateIds, streamsFound: streamList.length });
+
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
         'Pragma': 'no-cache',
         'Expires': '0'
       });
-      res.end(JSON.stringify({ streams: Array.from(streamMap.values()) }));
+      res.end(JSON.stringify({ streams: streamList }));
       return;
     }
 
-    // 5. Meta
-    const metaMatch = pathname.match(/^\/meta\/([^\/]+)\/([^\/]+)\.json$/);
+    // 7. Meta fallback
+    const metaMatch = pathname.match(/^\/meta\/([^\/]+)\/([^\/]+?)(?:\.json)?\/?$/);
     if (metaMatch) {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ meta: null }));
@@ -662,12 +757,16 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 404
+    recordLog(req, 404, { pathname });
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'Endpoint not found', pathname }));
   } catch (err) {
+    recordLog(req, 500, { pathname, error: err.message });
     console.error(`[Server Error] ${pathname}:`, err);
-    res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ error: 'Internal server error', message: err.message }));
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'Internal server error', message: err.message }));
+    }
   }
 });
 
